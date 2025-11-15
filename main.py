@@ -30,7 +30,7 @@ async def main():
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            headless=False, channel="chrome"
+            headless=True, channel="chrome"
         )  # 使用系统浏览器
         page = await browser.new_page()
         await page.goto("https://www.educoder.net/")  # 跳转主页
@@ -46,9 +46,7 @@ async def main():
 
         await page.get_by_role("banner").locator("img").click()
         async with page.expect_popup() as page1_info:
-            await page.get_by_text(
-                "算法设计与分析2025秋季班级刘锦隐藏715435414"
-            ).click()
+            await page.get_by_text("算法设计与分析2025秋季班级").click()
         page1 = await page1_info.value
         await page1.get_by_role("link", name="第一章 算法概述").click()
         async with page1.expect_popup() as page2_info:
@@ -62,33 +60,37 @@ async def main():
 
             await chapter.filter(has_text=chap).first.click()
             await asyncio.sleep(2)  # 等待视频加载完毕
-            await page2.evaluate(
+            init_result = await page2.evaluate(
                 """
-                () => {
-                    const video = document.querySelector('video');
-                    if (!video) {
-                        window.__videoDone = null;  // 标记失败情况
-                        return;
-                    }
-                    // 每次章节切换都重置
-                    window.__videoDone = false;
-                    // 使用 addEventListener，避免站点自身重置 onended 导致监听丢失
-                    const handler = () => {
-                        window.__videoDone = true;
-                        console.log('>>> 视频播放结束');
-                        video.removeEventListener('ended', handler);
-                    };
-                    video.addEventListener('ended', handler);
-                }
-            """
-            )
+() => {
+    const video = document.querySelector('video');
+    if (!video) {
+        window.__videoDone = null;
+        return 'no-video';
+    }
+    window.__videoDone = false;
 
+    const handler = () => {
+        window.__videoDone = true;
+        video.removeEventListener('ended', handler);
+    };
+    video.addEventListener('ended', handler);
+
+    video.muted = true;
+    video.play().catch(e => console.error(e));
+
+    return 'ok:' + video.duration;
+}
+"""
+            )
+            print("初始化视频结果:", init_result)
             # 4. 点击播放按钮
 
             await play_button.click()
 
             # 5. 等待视频播完（__videoDone === true）
-            await page2.wait_for_function("window.__videoDone === true")
+            await page2.wait_for_function("window.__videoDone === true", timeout=0)
+            print("视频播放完成")
 
         await page2.pause()
 
