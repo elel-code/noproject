@@ -72,11 +72,13 @@ async def main():
                     }
                     // 每次章节切换都重置
                     window.__videoDone = false;
-                    // 只监听一次，避免多次叠加
-                    video.onended = () => {
+                    // 使用 addEventListener，避免站点自身重置 onended 导致监听丢失
+                    const handler = () => {
                         window.__videoDone = true;
                         console.log('>>> 视频播放结束');
+                        video.removeEventListener('ended', handler);
                     };
+                    video.addEventListener('ended', handler);
                 }
             """
             )
