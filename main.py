@@ -77,7 +77,7 @@ async def main():
     video.addEventListener('ended', handler);
 
     video.muted = true;
-    video.play().catch(e => console.error(e));
+    
 
     return 'ok:' + video.duration;
 }
