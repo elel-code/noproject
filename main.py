@@ -23,10 +23,32 @@ USERNAME = _config.get("username", "")
 PASSWORD = _config.get("password", "")
 
 
-async def main():
+def _get_start_index() -> int:
+    """根据配置中的 next 计算起始下标，并做边界修正。"""
+    total = len(chapter_name)
+    start_index = _config.get("next", 0) or 0
+    if not isinstance(start_index, int) or start_index < 0:
+        start_index = 0
+    if start_index > total:
+        start_index = total
+    return start_index
+
+
+# 当前会话的“下一个待播放章节下标”，用于在 Ctrl+C 等异常退出时落盘
+CURRENT_NEXT = _get_start_index()
+
+
+async def main() -> int:
+    """主逻辑，返回本次运行结束后的 next 下标。"""
+    global CURRENT_NEXT
     # 用户名和密码从 JSON 配置读取，缺失时回退为交互输入
     username = USERNAME or input("请输入 Educoder 登录手机号/邮箱/账号: ")
     password = PASSWORD or getpass.getpass("请输入 Educoder 登录密码: ")
+
+    total = len(chapter_name)
+    # 从 CURRENT_NEXT 作为起始下标（已在加载时经过一次边界修正）
+    start_index = CURRENT_NEXT
+    next_index = start_index
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -56,7 +78,8 @@ async def main():
         play_button = page2.locator("#play")
         chapter = page2.locator("span")
 
-        for chap in chapter_name:
+        for idx, chap in enumerate(chapter_name[start_index:], start=start_index):
+            label = f"[{idx + 1}/{total}] {chap}"
 
             await chapter.filter(has_text=chap).first.click()
             await asyncio.sleep(2)  # 等待视频加载完毕
@@ -77,22 +100,49 @@ async def main():
     video.addEventListener('ended', handler);
 
     video.muted = true;
-    
 
     return 'ok:' + video.duration;
 }
 """
             )
-            print("初始化视频结果:", init_result)
-            # 4. 点击播放按钮
 
+            # 根据初始化结果优化输出
+            if isinstance(init_result, str) and init_result.startswith("ok:"):
+                duration_str = init_result.split(":", 1)[1]
+                try:
+                    duration = float(duration_str)
+                    print(f"{label} 初始化成功，视频时长约 {duration:.1f} 秒，开始播放…")
+                except ValueError:
+                    print(f"{label} 初始化成功，开始播放…")
+            elif init_result == "no-video":
+                print(f"{label} 未找到视频元素，跳过该章节。")
+                continue
+            else:
+                print(f"{label} 初始化结果异常（{init_result}），尝试继续播放…")
+
+            # 点击播放按钮
             await play_button.click()
 
-            # 5. 等待视频播完（__videoDone === true）
+            # 等待视频播完（__videoDone === true）
             await page2.wait_for_function("window.__videoDone === true", timeout=0)
-            print("视频播放完成")
+            print(f"{label} 播放完成。")
 
-        await page2.pause()
+            # 更新下一个待播放下标
+            next_index = idx + 1
+            CURRENT_NEXT = next_index
+
+    return next_index
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    # 运行主逻辑；无论正常结束还是 Ctrl+C 中断，都根据 CURRENT_NEXT 更新 next 字段
+    try:
+        new_next = asyncio.run(main())
+        CURRENT_NEXT = new_next
+    except KeyboardInterrupt:
+        print("\n检测到 Ctrl+C，中断当前播放…")
+    finally:
+        _config["next"] = CURRENT_NEXT
+        with CONFIG_PATH.open("w", encoding="utf-8") as f:
+            json.dump(_config, f, ensure_ascii=False, indent=2)
+        print(f"已保存进度，next = {CURRENT_NEXT}")
